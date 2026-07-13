@@ -155,12 +155,28 @@ install_bun() {
   log "Bun установлен: $("${BUN_BIN}" --version)"
 }
 
+is_valid_domain() {
+  [[ "${1}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]
+}
+
+is_valid_email() {
+  [[ "${1}" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]
+}
+
 prompt_domain() {
   if [[ -f "${DEPLOY_ENV}" ]]; then
     # shellcheck disable=SC1090
     source "${DEPLOY_ENV}"
-    log "Домен: ${DOMAIN}"
-    return
+    DOMAIN=$(echo "${DOMAIN:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    EMAIL=$(echo "${EMAIL:-}" | tr -d '[:space:]')
+
+    if is_valid_domain "${DOMAIN}" && is_valid_email "${EMAIL}"; then
+      log "Домен: ${DOMAIN}"
+      return
+    fi
+
+    warn "Файл ${DEPLOY_ENV} содержит некорректные данные — запросим заново"
+    rm -f "${DEPLOY_ENV}"
   fi
 
   echo ""
@@ -171,12 +187,21 @@ prompt_domain() {
   while true; do
     read -rp "Домен (например xhiveee.ru): " DOMAIN
     DOMAIN=$(echo "${DOMAIN}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-    [[ -n "${DOMAIN}" ]] && break
-    warn "Домен не может быть пустым"
+    if is_valid_domain "${DOMAIN}"; then
+      break
+    fi
+    warn "Введите домен латиницей, например: xhiveee.ru"
   done
 
-  read -rp "Email для Let's Encrypt [admin@${DOMAIN}]: " EMAIL
-  EMAIL="${EMAIL:-admin@${DOMAIN}}"
+  while true; do
+    read -rp "Email для Let's Encrypt [admin@${DOMAIN}]: " EMAIL
+    EMAIL=$(echo "${EMAIL}" | tr -d '[:space:]')
+    EMAIL="${EMAIL:-admin@${DOMAIN}}"
+    if is_valid_email "${EMAIL}"; then
+      break
+    fi
+    warn "Введите корректный email латиницей, например: admin@${DOMAIN}"
+  done
 
   cat > "${DEPLOY_ENV}" <<EOF
 DOMAIN=${DOMAIN}
@@ -335,17 +360,19 @@ cmd_update() {
 main() {
   case "${1:-}" in
     --update) cmd_update ;;
+    --reconfigure) rm -f "${DEPLOY_ENV}"; cmd_install ;;
     -h|--help)
       cat <<EOF
 Использование:
-  bash $0           Установка
-  bash $0 --update  Обновление
+  bash $0               Установка
+  bash $0 --update      Обновление
+  bash $0 --reconfigure Заново запросить домен и email
 
 Проект: ${APP_DIR}
 EOF
       ;;
     "") cmd_install ;;
-    *) die "Неизвестный аргумент: $1" ;;
+    *) die "Неизвестный аргумент: $1. Используйте: bash $0 --help" ;;
   esac
 }
 
