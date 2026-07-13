@@ -73,10 +73,16 @@ install_packages() {
     ufw
 }
 
+BUN_BIN="/usr/local/bin/bun"
+
 install_bun() {
-  if command -v bun >/dev/null 2>&1; then
-    log "Bun уже установлен: $(bun --version)"
+  if [[ -x "${BUN_BIN}" ]] && sudo -u "${APP_USER}" "${BUN_BIN}" --version >/dev/null 2>&1; then
+    log "Bun уже установлен: $("${BUN_BIN}" --version)"
     return
+  fi
+
+  if [[ -L "${BUN_BIN}" ]]; then
+    rm -f "${BUN_BIN}"
   fi
 
   if ! command -v unzip >/dev/null 2>&1; then
@@ -86,15 +92,18 @@ install_bun() {
     apt-get install -y -qq unzip
   fi
 
-  log "Установка Bun ${BUN_VERSION}..."
+  log "Установка Bun ${BUN_VERSION} в /usr/local..."
+  export BUN_INSTALL="/usr/local"
   curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
 
-  local bun_bin="/root/.bun/bin/bun"
-  [[ -x "${bun_bin}" ]] || bun_bin="${HOME}/.bun/bin/bun"
-  [[ -x "${bun_bin}" ]] || die "Bun установлен, но бинарник не найден"
+  [[ -x "${BUN_BIN}" ]] || die "Bun не найден: ${BUN_BIN}"
+  chmod 755 "${BUN_BIN}"
 
-  ln -sf "${bun_bin}" /usr/local/bin/bun
-  log "Bun установлен: $(bun --version)"
+  if ! sudo -u "${APP_USER}" "${BUN_BIN}" --version >/dev/null 2>&1; then
+    die "Пользователь ${APP_USER} не может запустить ${BUN_BIN}"
+  fi
+
+  log "Bun установлен: $("${BUN_BIN}" --version)"
 }
 
 setup_app_user() {
@@ -222,9 +231,9 @@ EOF
 build_app() {
   log "Установка зависимостей и сборка..."
   cd "${APP_DIR}"
-  sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" bun install --frozen-lockfile 2>/dev/null \
-    || sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" bun install
-  sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" bun run build
+  sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" "${BUN_BIN}" install --frozen-lockfile 2>/dev/null \
+    || sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" "${BUN_BIN}" install
+  sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" "${BUN_BIN}" run build
   log "Сборка завершена"
 }
 
@@ -243,7 +252,7 @@ Group=${APP_USER}
 WorkingDirectory=${APP_DIR}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
-ExecStart=/usr/local/bin/bun run preview
+ExecStart=${BUN_BIN} run preview
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
