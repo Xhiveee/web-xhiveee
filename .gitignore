@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.bun-cache/
+
+# Build
+dist/
+
+# Runtime data (visitor counter)
+data/visitors.json
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+*.swo
+
+# Vite
+.vite/
