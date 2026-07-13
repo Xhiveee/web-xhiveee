@@ -1,6 +1,21 @@
 # Руководство по управлению сайтом после установки
 
-Документ описывает, как управлять сайтом **xhiveee** на VDS после запуска `scripts/deploy-vds.sh --init`.
+Документ описывает, как управлять сайтом **xhiveee** на VDS после запуска `bash deploy-vds.sh`.
+
+---
+
+## 0. Первая установка
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Xhiveee/web-xhiveee/main/scripts/deploy-vds.sh -o deploy-vds.sh
+bash deploy-vds.sh
+```
+
+Скрипт:
+1. Клонирует репозиторий в `/opt/xhiveee`
+2. Устанавливает пакеты (nginx, certbot, bun и др.)
+3. Спрашивает домен и email для SSL
+4. Собирает и запускает сайт
 
 ---
 
@@ -88,18 +103,11 @@ curl -s https://xhiveee.ru/api/visits
 
 ## 3. Обновление сайта
 
-### Вариант A — через Git (если при установке указали GIT_REPO)
+### Вариант A — через скрипт (рекомендуется)
 
 ```bash
-cd /opt/xhiveee
-bash scripts/deploy-vds.sh --update
+bash /opt/xhiveee/scripts/deploy-vds.sh --update
 ```
-
-Скрипт сам:
-1. сделает `git pull`
-2. установит зависимости
-3. пересоберёт проект
-4. перезапустит сервис
 
 ### Вариант B — загрузка с локального компьютера (rsync)
 
@@ -398,9 +406,8 @@ alias site-restart='systemctl restart xhiveee && systemctl reload nginx'
 
 | Переменная | По умолчанию | Описание |
 |------------|--------------|----------|
-| `DOMAIN` | `xhiveee.ru` | Домен сайта |
-| `EMAIL` | `admin@<домен>` | Email для Let's Encrypt |
-| `GIT_REPO` | — | URL репозитория |
+| `DOMAIN` | из `.deploy.env` | Домен сайта |
+| `EMAIL` | из `.deploy.env` | Email для Let's Encrypt |
 | `APP_DIR` | `/opt/xhiveee` | Путь установки |
 | `APP_PORT` | `4173` | Внутренний порт preview |
 | `BUN_VERSION` | `1.3.14` | Версия Bun |
@@ -408,6 +415,5 @@ alias site-restart='systemctl restart xhiveee && systemctl reload nginx'
 Пример:
 
 ```bash
-DOMAIN=xhiveee.ru EMAIL=you@mail.ru \
-  bash /opt/xhiveee/scripts/deploy-vds.sh --update
+bash /opt/xhiveee/scripts/deploy-vds.sh --update
 ```

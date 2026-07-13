@@ -1,35 +1,26 @@
 #!/usr/bin/env bash
 #
-# Деплой web-xhiveee на VDS (Ubuntu/Debian).
+# Деплой xhiveee на VDS (Ubuntu/Debian).
 #
-# Первый запуск на сервере (от root):
-#   DOMAIN=xhiveee.ru EMAIL=you@mail.ru GIT_REPO=https://github.com/Xhiveee/web-xhiveee.git \
-#     bash scripts/deploy-vds.sh --init
+# На чистом сервере (от root):
+#   curl -fsSL https://raw.githubusercontent.com/Xhiveee/web-xhiveee/main/scripts/deploy-vds.sh -o deploy-vds.sh
+#   bash deploy-vds.sh
 #
-# Обновление после git pull / rsync:
-#   bash scripts/deploy-vds.sh --update
-#
-# Деплой с локальной машины (PowerShell / bash):
-#   rsync -avz --delete \
-#     --exclude node_modules --exclude dist --exclude .bun-cache --exclude data/visitors.json \
-#     ./ root@YOUR_VDS_IP:/opt/xhiveee/
-#   ssh root@YOUR_VDS_IP 'bash /opt/xhiveee/scripts/deploy-vds.sh --update'
+# Обновление:
+#   bash /opt/xhiveee/scripts/deploy-vds.sh --update
 #
 set -euo pipefail
 
-# ── Настройки (можно переопределить через переменные окружения) ──────────────
-DOMAIN="${DOMAIN:-xhiveee.ru}"
-EMAIL="${EMAIL:-admin@${DOMAIN}}"
-GIT_REPO="${GIT_REPO:-}"
-APP_NAME="${APP_NAME:-xhiveee}"
-APP_DIR="${APP_DIR:-/opt/xhiveee}"
-APP_USER="${APP_USER:-xhiveee}"
-APP_PORT="${APP_PORT:-4173}"
-BUN_VERSION="${BUN_VERSION:-1.3.14}"
+GIT_REPO="https://github.com/Xhiveee/web-xhiveee.git"
+APP_NAME="xhiveee"
+APP_DIR="/opt/xhiveee"
+APP_USER="xhiveee"
+APP_PORT="4173"
+BUN_VERSION="1.3.14"
 NGINX_SITE="/etc/nginx/sites-available/${APP_NAME}"
 SYSTEMD_UNIT="/etc/systemd/system/${APP_NAME}.service"
+DEPLOY_ENV="${APP_DIR}/.deploy.env"
 
-# ── Цвета ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -40,27 +31,32 @@ warn() { echo -e "${YELLOW}!!>${NC} $*"; }
 die()  { echo -e "${RED}ERROR:${NC} $*" >&2; exit 1; }
 
 require_root() {
-  [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Запустите скрипт от root: sudo bash $0 $*"
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Запустите от root: sudo bash $0"
 }
 
 detect_os() {
   if [[ -f /etc/os-release ]]; then
     # shellcheck disable=SC1091
     . /etc/os-release
-    OS_ID="${ID:-unknown}"
-    OS_VERSION="${VERSION_ID:-}"
+    case "${ID:-}" in
+      ubuntu|debian) ;;
+      *) die "Поддерживаются только Ubuntu/Debian, обнаружено: ${ID:-unknown}" ;;
+    esac
   else
-    die "Не удалось определить ОС. Поддерживаются Ubuntu/Debian."
+    die "Не удалось определить ОС"
   fi
-
-  case "${OS_ID}" in
-    ubuntu|debian) ;;
-    *) die "Поддерживаются только Ubuntu/Debian, обнаружено: ${OS_ID}" ;;
-  esac
 }
 
-install_system_packages() {
-  log "Обновление пакетов и установка зависимостей..."
+bootstrap_git() {
+  command -v git >/dev/null 2>&1 && return
+  log "Установка git для клонирования..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq git ca-certificates
+}
+
+install_packages() {
+  log "Установка системных пакетов..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq \
@@ -70,7 +66,6 @@ install_system_packages() {
     nginx \
     certbot \
     python3-certbot-nginx \
-    rsync \
     ufw
 }
 
@@ -83,14 +78,9 @@ install_bun() {
   log "Установка Bun ${BUN_VERSION}..."
   curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
 
-  local bun_bin
-  if [[ -x /root/.bun/bin/bun ]]; then
-    bun_bin="/root/.bun/bin/bun"
-  elif [[ -x "${HOME}/.bun/bin/bun" ]]; then
-    bun_bin="${HOME}/.bun/bin/bun"
-  else
-    die "Bun установлен, но бинарник не найден"
-  fi
+  local bun_bin="/root/.bun/bin/bun"
+  [[ -x "${bun_bin}" ]] || bun_bin="${HOME}/.bun/bin/bun"
+  [[ -x "${bun_bin}" ]] || die "Bun установлен, но бинарник не найден"
 
   ln -sf "${bun_bin}" /usr/local/bin/bun
   log "Bun установлен: $(bun --version)"
@@ -101,52 +91,63 @@ setup_app_user() {
     log "Создание пользователя ${APP_USER}..."
     useradd --system --home "${APP_DIR}" --shell /usr/sbin/nologin "${APP_USER}"
   fi
+}
+
+clone_repo() {
+  if [[ -d "${APP_DIR}/.git" ]]; then
+    log "Репозиторий уже есть, обновление (git pull)..."
+    git -C "${APP_DIR}" pull --ff-only
+  else
+    log "Клонирование репозитория в ${APP_DIR}..."
+    rm -rf "${APP_DIR}"
+    git clone "${GIT_REPO}" "${APP_DIR}"
+  fi
 
   mkdir -p "${APP_DIR}/data"
   chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
-}
-
-clone_or_update_repo() {
-  if [[ -n "${GIT_REPO}" ]]; then
-    if [[ ! -d "${APP_DIR}/.git" ]]; then
-      log "Клонирование репозитория..."
-      rm -rf "${APP_DIR}"
-      git clone "${GIT_REPO}" "${APP_DIR}"
-    else
-      log "Обновление репозитория (git pull)..."
-      git -C "${APP_DIR}" pull --ff-only
-    fi
-  elif [[ -f "${APP_DIR}/package.json" ]]; then
-    log "Используется существующий код в ${APP_DIR}"
-  elif [[ -f "./package.json" && "$(realpath .)" != "$(realpath "${APP_DIR}")" ]]; then
-    log "Копирование проекта в ${APP_DIR}..."
-    rsync -a --delete \
-      --exclude node_modules \
-      --exclude dist \
-      --exclude .bun-cache \
-      --exclude .git \
-      --exclude data/visitors.json \
-      ./ "${APP_DIR}/"
-  else
-    die "Нет кода для деплоя. Укажите GIT_REPO или скопируйте проект в ${APP_DIR}"
-  fi
-
-  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 
   if [[ ! -f "${APP_DIR}/data/visitors.json" ]]; then
-    log "Создание data/visitors.json..."
     echo '{ "ips": [] }' > "${APP_DIR}/data/visitors.json"
     chown "${APP_USER}:${APP_USER}" "${APP_DIR}/data/visitors.json"
   fi
 }
 
+prompt_domain() {
+  if [[ -f "${DEPLOY_ENV}" ]]; then
+    # shellcheck disable=SC1090
+    source "${DEPLOY_ENV}"
+    log "Домен: ${DOMAIN}"
+    return
+  fi
+
+  echo ""
+  echo "Настройка домена для Nginx и SSL-сертификата."
+  warn "Перед продолжением убедитесь, что DNS A-запись домена указывает на этот сервер."
+  echo ""
+
+  while true; do
+    read -rp "Введите домен (например xhiveee.ru): " DOMAIN
+    DOMAIN=$(echo "${DOMAIN}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ -n "${DOMAIN}" ]] && break
+    warn "Домен не может быть пустым"
+  done
+
+  read -rp "Email для Let's Encrypt [admin@${DOMAIN}]: " EMAIL
+  EMAIL="${EMAIL:-admin@${DOMAIN}}"
+
+  cat > "${DEPLOY_ENV}" <<EOF
+DOMAIN=${DOMAIN}
+EMAIL=${EMAIL}
+EOF
+  chmod 600 "${DEPLOY_ENV}"
+  chown "${APP_USER}:${APP_USER}" "${DEPLOY_ENV}"
+}
+
 build_app() {
   log "Установка зависимостей и сборка..."
   cd "${APP_DIR}"
-
   sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" bun install --frozen-lockfile 2>/dev/null \
     || sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" bun install
-
   sudo -u "${APP_USER}" env PATH="/usr/local/bin:${PATH}" bun run build
   log "Сборка завершена"
 }
@@ -155,7 +156,7 @@ write_systemd_unit() {
   log "Настройка systemd-сервиса..."
   cat > "${SYSTEMD_UNIT}" <<EOF
 [Unit]
-Description=${APP_NAME} — Svelte landing (vite preview)
+Description=${APP_NAME} — Svelte landing
 After=network-online.target
 Wants=network-online.target
 
@@ -178,12 +179,10 @@ EOF
   systemctl daemon-reload
   systemctl enable "${APP_NAME}"
   systemctl restart "${APP_NAME}"
-  log "Сервис ${APP_NAME} запущен на 127.0.0.1:${APP_PORT}"
 }
 
 write_nginx_config() {
   log "Настройка Nginx для ${DOMAIN}..."
-
   cat > "${NGINX_SITE}" <<EOF
 server {
     listen 80;
@@ -206,14 +205,13 @@ EOF
 
   ln -sf "${NGINX_SITE}" "/etc/nginx/sites-enabled/${APP_NAME}"
   rm -f /etc/nginx/sites-enabled/default
-
   nginx -t
   systemctl reload nginx
 }
 
 setup_ssl() {
   if [[ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]]; then
-    log "SSL-сертификат уже существует, обновление..."
+    log "SSL-сертификат уже существует"
     certbot renew --quiet || true
     return
   fi
@@ -226,15 +224,11 @@ setup_ssl() {
     --agree-tos \
     -m "${EMAIL}" \
     --redirect
-
   log "SSL настроен"
 }
 
 setup_firewall() {
-  if ! command -v ufw >/dev/null 2>&1; then
-    return
-  fi
-
+  command -v ufw >/dev/null 2>&1 || return
   log "Настройка UFW (22, 80, 443)..."
   ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp
   ufw allow 'Nginx Full' >/dev/null 2>&1 || { ufw allow 80/tcp; ufw allow 443/tcp; }
@@ -243,23 +237,25 @@ setup_firewall() {
 
 print_summary() {
   echo ""
-  log "Деплой завершён"
-  echo "  Сайт:     https://${DOMAIN}"
-  echo "  Код:      ${APP_DIR}"
-  echo "  Сервис:   systemctl status ${APP_NAME}"
-  echo "  Логи:     journalctl -u ${APP_NAME} -f"
-  echo "  Nginx:    ${NGINX_SITE}"
+  log "Готово!"
+  echo "  Сайт:    https://${DOMAIN}"
+  echo "  Код:     ${APP_DIR}"
+  echo "  Статус:  systemctl status ${APP_NAME}"
+  echo "  Логи:    journalctl -u ${APP_NAME} -f"
+  echo "  Update:  bash ${APP_DIR}/scripts/deploy-vds.sh --update"
   echo ""
-  warn "Убедитесь, что DNS A-запись ${DOMAIN} → IP этого сервера уже настроена."
 }
 
-cmd_init() {
+cmd_install() {
   require_root
   detect_os
-  install_system_packages
+  bootstrap_git
+  clone_repo
+  install_packages
   install_bun
   setup_app_user
-  clone_or_update_repo
+  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+  prompt_domain
   build_app
   write_systemd_unit
   write_nginx_config
@@ -271,40 +267,31 @@ cmd_init() {
 cmd_update() {
   require_root
   detect_os
-
+  [[ -d "${APP_DIR}/.git" ]] || die "Проект не установлен. Сначала запустите: bash $0"
   command -v bun >/dev/null 2>&1 || install_bun
-  [[ -d "${APP_DIR}" ]] || die "Каталог ${APP_DIR} не найден. Сначала запустите --init"
-
-  clone_or_update_repo
+  # shellcheck disable=SC1090
+  [[ -f "${DEPLOY_ENV}" ]] && source "${DEPLOY_ENV}"
+  clone_repo
   build_app
   systemctl restart "${APP_NAME}"
   nginx -t && systemctl reload nginx
   print_summary
 }
 
-usage() {
-  cat <<EOF
-Использование: $0 [--init | --update]
-
-  --init    Первичная установка на чистый VDS
-  --update  Обновление кода и перезапуск
-
-Переменные окружения:
-  DOMAIN     Домен (по умолчанию: xhiveee.ru)
-  EMAIL      Email для Let's Encrypt
-  GIT_REPO   URL git-репозитория (опционально)
-  APP_DIR    Путь установки (по умолчанию: /opt/xhiveee)
-EOF
-}
-
 main() {
-  local mode="${1:-}"
-
-  case "${mode}" in
-    --init)  cmd_init ;;
+  case "${1:-}" in
     --update) cmd_update ;;
-    -h|--help|"") usage ;;
-    *) die "Неизвестный аргумент: ${mode}. Используйте --init или --update" ;;
+    -h|--help)
+      cat <<EOF
+Использование:
+  bash $0           Первая установка (клонирование + настройка)
+  bash $0 --update  Обновление кода с GitHub
+
+Проект устанавливается в ${APP_DIR}
+EOF
+      ;;
+    "") cmd_install ;;
+    *) die "Неизвестный аргумент: $1. Используйте: bash $0" ;;
   esac
 }
 

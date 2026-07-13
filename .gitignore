@@ -8,6 +8,9 @@ dist/
 # Runtime data (visitor counter)
 data/visitors.json
 
+# Deploy config (domain, email — only on server)
+.deploy.env
+
 # Environment
 .env
 .env.*

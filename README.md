@@ -80,13 +80,14 @@ web-xhiveee/
 
 ## Деплой на VDS
 
-Первичная установка на Ubuntu/Debian (код в `/opt/xhiveee`):
+Первичная установка на Ubuntu/Debian:
 
 ```bash
-DOMAIN=xhiveee.ru EMAIL=you@mail.ru \
-GIT_REPO=https://github.com/Xhiveee/web-xhiveee.git \
-bash scripts/deploy-vds.sh --init
+curl -fsSL https://raw.githubusercontent.com/Xhiveee/web-xhiveee/main/scripts/deploy-vds.sh -o deploy-vds.sh
+bash deploy-vds.sh
 ```
+
+Скрипт сам клонирует репозиторий в `/opt/xhiveee`, установит пакеты и спросит домен для Nginx и SSL.
 
 Обновление на сервере:
 
