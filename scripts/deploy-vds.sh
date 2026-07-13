@@ -140,15 +140,34 @@ reexec_from_repo() {
   fi
 }
 
+reexec_after_pull() {
+  local mode="${1:-}"
+  local repo_script="${APP_DIR}/scripts/deploy-vds.sh"
+
+  [[ -f "${repo_script}" ]] || return 0
+  [[ "${DEPLOY_REPO_UPDATED:-0}" == "1" ]] || return 0
+
+  log "Перезапуск после обновления репозитория..."
+  exec bash "${repo_script}" ${mode:+"${mode}"}
+}
+
 git_repo_sync() {
+  DEPLOY_REPO_UPDATED=0
+
   if [[ -d "${APP_DIR}/.git" ]]; then
     log "Репозиторий уже есть, обновление (git pull)..."
     configure_git_safe_directory
-    git -C "${APP_DIR}" pull --ff-only
+    local pull_output
+    pull_output="$(git -C "${APP_DIR}" pull --ff-only 2>&1)" || die "${pull_output}"
+    echo "${pull_output}"
+    if ! grep -q 'Already up to date' <<< "${pull_output}"; then
+      DEPLOY_REPO_UPDATED=1
+    fi
   else
     log "Клонирование репозитория в ${APP_DIR}..."
     rm -rf "${APP_DIR}"
     git clone "${GIT_REPO}" "${APP_DIR}"
+    DEPLOY_REPO_UPDATED=1
   fi
 }
 
@@ -158,7 +177,7 @@ clone_repo() {
   configure_git_safe_directory
   reexec_from_repo ${mode:+"${mode}"}
   git_repo_sync
-  reexec_from_repo ${mode:+"${mode}"}
+  reexec_after_pull ${mode:+"${mode}"}
 
   mkdir -p "${APP_DIR}/data"
 
