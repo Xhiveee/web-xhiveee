@@ -66,6 +66,7 @@ install_packages() {
     ca-certificates \
     curl \
     git \
+    unzip \
     nginx \
     certbot \
     python3-certbot-nginx \
@@ -76,6 +77,13 @@ install_bun() {
   if command -v bun >/dev/null 2>&1; then
     log "Bun уже установлен: $(bun --version)"
     return
+  fi
+
+  if ! command -v unzip >/dev/null 2>&1; then
+    log "Установка unzip (нужен для Bun)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq unzip
   fi
 
   log "Установка Bun ${BUN_VERSION}..."
