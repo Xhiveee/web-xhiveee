@@ -1,6 +1,6 @@
 # Руководство по управлению сайтом после установки
 
-Документ описывает, как управлять сайтом **web-xhiveee** на VDS после запуска `scripts/deploy-vds.sh --init`.
+Документ описывает, как управлять сайтом **xhiveee** на VDS после запуска `scripts/deploy-vds.sh --init`.
 
 ---
 
@@ -13,7 +13,7 @@
 Nginx (порты 80/443, SSL)
    │  proxy_pass + заголовки X-Real-IP / X-Forwarded-For
    ▼
-systemd-сервис web-xhiveee
+systemd-сервис xhiveee
    │  bun run preview → 127.0.0.1:4173
    ▼
 Vite preview + visitCounter plugin
@@ -26,12 +26,12 @@ Vite preview + visitCounter plugin
 
 | Что | Где / как называется |
 |-----|----------------------|
-| Код проекта | `/var/www/web-xhiveee` |
-| Пользователь сервиса | `web-xhiveee` |
-| systemd-сервис | `web-xhiveee` |
-| Nginx-конфиг | `/etc/nginx/sites-available/web-xhiveee` |
-| Сборка | `/var/www/web-xhiveee/dist` |
-| Счётчик посещений | `/var/www/web-xhiveee/data/visitors.json` |
+| Код проекта | `/opt/xhiveee` |
+| Пользователь сервиса | `xhiveee` |
+| systemd-сервис | `xhiveee` |
+| Nginx-конфиг | `/etc/nginx/sites-available/xhiveee` |
+| Сборка | `/opt/xhiveee/dist` |
+| Счётчик посещений | `/opt/xhiveee/data/visitors.json` |
 | SSL-сертификат | `/etc/letsencrypt/live/<домен>/` |
 | Внутренний порт приложения | `127.0.0.1:4173` |
 
@@ -47,14 +47,14 @@ Vite preview + visitCounter plugin
 
 ```bash
 # Статус приложения
-systemctl status web-xhiveee
+systemctl status xhiveee
 
 # Перезапуск сайта
-systemctl restart web-xhiveee
+systemctl restart xhiveee
 
 # Остановить / запустить
-systemctl stop web-xhiveee
-systemctl start web-xhiveee
+systemctl stop xhiveee
+systemctl start xhiveee
 
 # Статус Nginx
 systemctl status nginx
@@ -67,10 +67,10 @@ nginx -t && systemctl reload nginx
 
 ```bash
 # Логи приложения в реальном времени
-journalctl -u web-xhiveee -f
+journalctl -u xhiveee -f
 
 # Последние 100 строк
-journalctl -u web-xhiveee -n 100 --no-pager
+journalctl -u xhiveee -n 100 --no-pager
 
 # Логи Nginx
 tail -f /var/log/nginx/access.log
@@ -91,7 +91,7 @@ curl -s https://xhiveee.ru/api/visits
 ### Вариант A — через Git (если при установке указали GIT_REPO)
 
 ```bash
-cd /var/www/web-xhiveee
+cd /opt/xhiveee
 bash scripts/deploy-vds.sh --update
 ```
 
@@ -111,9 +111,9 @@ rsync -avz --delete \
   --exclude dist \
   --exclude .bun-cache \
   --exclude data/visitors.json \
-  ./ root@IP_СЕРВЕРА:/var/www/web-xhiveee/
+  ./ root@IP_СЕРВЕРА:/opt/xhiveee/
 
-ssh root@IP_СЕРВЕРА 'bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update'
+ssh root@IP_СЕРВЕРА 'bash /opt/xhiveee/scripts/deploy-vds.sh --update'
 ```
 
 **Важно:** не перезаписывайте `data/visitors.json` — там хранится счётчик уникальных IP.
@@ -121,10 +121,10 @@ ssh root@IP_СЕРВЕРА 'bash /var/www/web-xhiveee/scripts/deploy-vds.sh --up
 ### Ручное обновление (без скрипта)
 
 ```bash
-cd /var/www/web-xhiveee
-sudo -u web-xhiveee env PATH="/usr/local/bin:$PATH" bun install
-sudo -u web-xhiveee env PATH="/usr/local/bin:$PATH" bun run build
-systemctl restart web-xhiveee
+cd /opt/xhiveee
+sudo -u xhiveee env PATH="/usr/local/bin:$PATH" bun install
+sudo -u xhiveee env PATH="/usr/local/bin:$PATH" bun run build
+systemctl restart xhiveee
 ```
 
 ---
@@ -151,9 +151,9 @@ systemctl restart web-xhiveee
 ### Редактирование прямо на сервере
 
 ```bash
-nano /var/www/web-xhiveee/src/lib/ru.ts
+nano /opt/xhiveee/src/lib/ru.ts
 # после правок:
-bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update
+bash /opt/xhiveee/scripts/deploy-vds.sh --update
 ```
 
 ---
@@ -163,7 +163,7 @@ bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update
 Счётчик считает **уникальные IP-адреса** и хранит их в:
 
 ```
-/var/www/web-xhiveee/data/visitors.json
+/opt/xhiveee/data/visitors.json
 ```
 
 Пример содержимого:
@@ -182,7 +182,7 @@ bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update
 ### Посмотреть текущее значение
 
 ```bash
-cat /var/www/web-xhiveee/data/visitors.json
+cat /opt/xhiveee/data/visitors.json
 # или через API:
 curl -s https://xhiveee.ru/api/visits
 ```
@@ -190,24 +190,24 @@ curl -s https://xhiveee.ru/api/visits
 ### Сбросить счётчик
 
 ```bash
-echo '{ "ips": [] }' > /var/www/web-xhiveee/data/visitors.json
-chown web-xhiveee:web-xhiveee /var/www/web-xhiveee/data/visitors.json
-systemctl restart web-xhiveee
+echo '{ "ips": [] }' > /opt/xhiveee/data/visitors.json
+chown xhiveee:xhiveee /opt/xhiveee/data/visitors.json
+systemctl restart xhiveee
 ```
 
 ### Резервная копия счётчика
 
 ```bash
-cp /var/www/web-xhiveee/data/visitors.json \
-   /var/www/web-xhiveee/data/visitors.json.bak.$(date +%F)
+cp /opt/xhiveee/data/visitors.json \
+   /opt/xhiveee/data/visitors.json.bak.$(date +%F)
 ```
 
 ### Если счётчик не отображается
 
-1. Проверьте, что сервис запущен: `systemctl status web-xhiveee`
+1. Проверьте, что сервис запущен: `systemctl status xhiveee`
 2. Проверьте API: `curl -X POST https://xhiveee.ru/api/visit`
 3. Убедитесь, что Nginx передаёт IP-заголовки (они настроены скриптом автоматически)
-4. Посмотрите логи: `journalctl -u web-xhiveee -n 50`
+4. Посмотрите логи: `journalctl -u xhiveee -n 50`
 
 ---
 
@@ -219,7 +219,7 @@ cp /var/www/web-xhiveee/data/visitors.json \
 2. Отредактируйте Nginx:
 
 ```bash
-nano /etc/nginx/sites-available/web-xhiveee
+nano /etc/nginx/sites-available/xhiveee
 # замените server_name на новый домен
 nginx -t && systemctl reload nginx
 ```
@@ -249,7 +249,7 @@ certbot renew             # реальное продление
 
 ## 7. Nginx
 
-Конфиг: `/etc/nginx/sites-available/web-xhiveee`
+Конфиг: `/etc/nginx/sites-available/xhiveee`
 
 Типичные задачи:
 
@@ -264,11 +264,11 @@ systemctl reload nginx
 systemctl restart nginx
 ```
 
-Если сайт отдаёт 502 Bad Gateway — чаще всего не запущен `web-xhiveee`:
+Если сайт отдаёт 502 Bad Gateway — чаще всего не запущен `xhiveee`:
 
 ```bash
-systemctl restart web-xhiveee
-systemctl status web-xhiveee
+systemctl restart xhiveee
+systemctl status xhiveee
 ```
 
 ---
@@ -295,26 +295,26 @@ ufw allow 443/tcp
 
 | Путь | Зачем |
 |------|-------|
-| `/var/www/web-xhiveee/data/visitors.json` | Счётчик посещений |
-| `/var/www/web-xhiveee/src/` | Контент и правки |
-| `/etc/nginx/sites-available/web-xhiveee` | Конфиг Nginx |
+| `/opt/xhiveee/data/visitors.json` | Счётчик посещений |
+| `/opt/xhiveee/src/` | Контент и правки |
+| `/etc/nginx/sites-available/xhiveee` | Конфиг Nginx |
 | `/etc/letsencrypt/` | SSL (опционально) |
 
 ### Пример архива
 
 ```bash
-tar -czf ~/backup-web-xhiveee-$(date +%F).tar.gz \
-  /var/www/web-xhiveee/data/visitors.json \
-  /var/www/web-xhiveee/src \
-  /etc/nginx/sites-available/web-xhiveee
+tar -czf ~/backup-xhiveee-$(date +%F).tar.gz \
+  /opt/xhiveee/data/visitors.json \
+  /opt/xhiveee/src \
+  /etc/nginx/sites-available/xhiveee
 ```
 
 ### Восстановление счётчика
 
 ```bash
-tar -xzf backup-web-xhiveee-YYYY-MM-DD.tar.gz -C /
-chown web-xhiveee:web-xhiveee /var/www/web-xhiveee/data/visitors.json
-systemctl restart web-xhiveee
+tar -xzf backup-xhiveee-YYYY-MM-DD.tar.gz -C /
+chown xhiveee:xhiveee /opt/xhiveee/data/visitors.json
+systemctl restart xhiveee
 ```
 
 ---
@@ -325,7 +325,7 @@ systemctl restart web-xhiveee
 
 ```bash
 systemctl status nginx
-systemctl status web-xhiveee
+systemctl status xhiveee
 curl -I http://127.0.0.1:4173
 ufw status
 ```
@@ -333,8 +333,8 @@ ufw status
 ### Ошибка при сборке
 
 ```bash
-cd /var/www/web-xhiveee
-sudo -u web-xhiveee env PATH="/usr/local/bin:$PATH" bun run build
+cd /opt/xhiveee
+sudo -u xhiveee env PATH="/usr/local/bin:$PATH" bun run build
 ```
 
 ### Bun не найден
@@ -349,19 +349,19 @@ ln -sf /root/.bun/bin/bun /usr/local/bin/bun
 
 ### Права на файлы
 
-Владелец проекта — пользователь `web-xhiveee`:
+Владелец проекта — пользователь `xhiveee`:
 
 ```bash
-chown -R web-xhiveee:web-xhiveee /var/www/web-xhiveee
+chown -R xhiveee:xhiveee /opt/xhiveee
 ```
 
 ### После смены vite.config.ts или systemd
 
 ```bash
-bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update
+bash /opt/xhiveee/scripts/deploy-vds.sh --update
 # или только перезапуск:
 systemctl daemon-reload
-systemctl restart web-xhiveee
+systemctl restart xhiveee
 ```
 
 ---
@@ -371,10 +371,10 @@ systemctl restart web-xhiveee
 Добавьте в `~/.bashrc` на сервере:
 
 ```bash
-alias site-status='systemctl status web-xhiveee nginx'
-alias site-logs='journalctl -u web-xhiveee -f'
-alias site-update='bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update'
-alias site-restart='systemctl restart web-xhiveee && systemctl reload nginx'
+alias site-status='systemctl status xhiveee nginx'
+alias site-logs='journalctl -u xhiveee -f'
+alias site-update='bash /opt/xhiveee/scripts/deploy-vds.sh --update'
+alias site-restart='systemctl restart xhiveee && systemctl reload nginx'
 ```
 
 Применить: `source ~/.bashrc`
@@ -384,7 +384,7 @@ alias site-restart='systemctl restart web-xhiveee && systemctl reload nginx'
 ## 12. Чеклист после любых изменений
 
 - [ ] `bun run build` прошёл без ошибок
-- [ ] `systemctl status web-xhiveee` — `active (running)`
+- [ ] `systemctl status xhiveee` — `active (running)`
 - [ ] `curl -I https://xhiveee.ru` — ответ 200/301
 - [ ] Счётчик в шапке обновляется
 - [ ] SSL валиден (замок в браузере)
@@ -401,7 +401,7 @@ alias site-restart='systemctl restart web-xhiveee && systemctl reload nginx'
 | `DOMAIN` | `xhiveee.ru` | Домен сайта |
 | `EMAIL` | `admin@<домен>` | Email для Let's Encrypt |
 | `GIT_REPO` | — | URL репозитория |
-| `APP_DIR` | `/var/www/web-xhiveee` | Путь установки |
+| `APP_DIR` | `/opt/xhiveee` | Путь установки |
 | `APP_PORT` | `4173` | Внутренний порт preview |
 | `BUN_VERSION` | `1.3.14` | Версия Bun |
 
@@ -409,5 +409,5 @@ alias site-restart='systemctl restart web-xhiveee && systemctl reload nginx'
 
 ```bash
 DOMAIN=xhiveee.ru EMAIL=you@mail.ru \
-  bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update
+  bash /opt/xhiveee/scripts/deploy-vds.sh --update
 ```

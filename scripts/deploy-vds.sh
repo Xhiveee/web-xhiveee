@@ -12,8 +12,8 @@
 # Деплой с локальной машины (PowerShell / bash):
 #   rsync -avz --delete \
 #     --exclude node_modules --exclude dist --exclude .bun-cache --exclude data/visitors.json \
-#     ./ root@YOUR_VDS_IP:/var/www/web-xhiveee/
-#   ssh root@YOUR_VDS_IP 'bash /var/www/web-xhiveee/scripts/deploy-vds.sh --update'
+#     ./ root@YOUR_VDS_IP:/opt/xhiveee/
+#   ssh root@YOUR_VDS_IP 'bash /opt/xhiveee/scripts/deploy-vds.sh --update'
 #
 set -euo pipefail
 
@@ -21,9 +21,9 @@ set -euo pipefail
 DOMAIN="${DOMAIN:-xhiveee.ru}"
 EMAIL="${EMAIL:-admin@${DOMAIN}}"
 GIT_REPO="${GIT_REPO:-}"
-APP_NAME="${APP_NAME:-web-xhiveee}"
-APP_DIR="${APP_DIR:-/var/www/${APP_NAME}}"
-APP_USER="${APP_USER:-${APP_NAME}}"
+APP_NAME="${APP_NAME:-xhiveee}"
+APP_DIR="${APP_DIR:-/opt/xhiveee}"
+APP_USER="${APP_USER:-xhiveee}"
 APP_PORT="${APP_PORT:-4173}"
 BUN_VERSION="${BUN_VERSION:-1.3.14}"
 NGINX_SITE="/etc/nginx/sites-available/${APP_NAME}"
@@ -125,6 +125,7 @@ clone_or_update_repo() {
       --exclude dist \
       --exclude .bun-cache \
       --exclude .git \
+      --exclude data/visitors.json \
       ./ "${APP_DIR}/"
   else
     die "Нет кода для деплоя. Укажите GIT_REPO или скопируйте проект в ${APP_DIR}"
@@ -292,7 +293,7 @@ usage() {
   DOMAIN     Домен (по умолчанию: xhiveee.ru)
   EMAIL      Email для Let's Encrypt
   GIT_REPO   URL git-репозитория (опционально)
-  APP_DIR    Путь установки (по умолчанию: /var/www/web-xhiveee)
+  APP_DIR    Путь установки (по умолчанию: /opt/xhiveee)
 EOF
 }
 
