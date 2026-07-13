@@ -235,6 +235,7 @@ Group=${APP_USER}
 WorkingDirectory=${APP_DIR}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
+Environment=PREVIEW_ALLOWED_HOSTS=${DOMAIN},www.${DOMAIN},localhost,127.0.0.1
 ExecStart=${BUN_BIN} run preview
 Restart=on-failure
 RestartSec=5
@@ -352,6 +353,7 @@ cmd_update() {
   # shellcheck disable=SC1090
   [[ -f "${DEPLOY_ENV}" ]] && source "${DEPLOY_ENV}"
   build_app
+  [[ -f "${DEPLOY_ENV}" ]] && write_systemd_unit
   systemctl restart "${APP_NAME}"
   nginx -t && systemctl reload nginx
   print_summary

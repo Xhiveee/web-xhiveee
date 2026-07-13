@@ -16,6 +16,9 @@ export default defineConfig({
   preview: {
     host: '127.0.0.1',
     port: 4173,
-    strictPort: true
+    strictPort: true,
+    allowedHosts: process.env.PREVIEW_ALLOWED_HOSTS
+      ? process.env.PREVIEW_ALLOWED_HOSTS.split(',').map((host) => host.trim())
+      : true
   }
 });
