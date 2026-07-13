@@ -2,9 +2,12 @@
 #
 # Деплой xhiveee на VDS (Ubuntu/Debian).
 #
-# На чистом сервере (от root):
+# Первый запуск (скачать bootstrap, дальше скрипт сам обновится из репозитория):
 #   curl -fsSL https://raw.githubusercontent.com/Xhiveee/web-xhiveee/main/scripts/deploy-vds.sh -o deploy-vds.sh
 #   bash deploy-vds.sh
+#
+# Или если репозиторий уже в /opt/xhiveee:
+#   bash /opt/xhiveee/scripts/deploy-vds.sh
 #
 # Обновление:
 #   bash /opt/xhiveee/scripts/deploy-vds.sh --update
@@ -87,19 +90,45 @@ install_bun() {
 }
 
 setup_app_user() {
-  if id "${APP_USER}" >/dev/null 2>&1; then
+  if id -u "${APP_USER}" >/dev/null 2>&1; then
+    log "Пользователь ${APP_USER} уже существует"
     return
   fi
+
   log "Создание пользователя ${APP_USER}..."
-  useradd --system --no-create-home --shell /usr/sbin/nologin "${APP_USER}"
+  if useradd --system --no-create-home --shell /usr/sbin/nologin "${APP_USER}" 2>/dev/null; then
+    return
+  fi
+
+  groupadd --system "${APP_USER}" 2>/dev/null || true
+  useradd --system --no-create-home --gid "${APP_USER}" --shell /usr/sbin/nologin "${APP_USER}" \
+    || die "Не удалось создать пользователя ${APP_USER}"
+
+  id -u "${APP_USER}" >/dev/null 2>&1 || die "Пользователь ${APP_USER} не создан"
 }
 
 ensure_app_ownership() {
   setup_app_user
+  id -u "${APP_USER}" >/dev/null 2>&1 || die "Пользователь ${APP_USER} не найден"
   chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 }
 
+reexec_from_repo() {
+  local repo_script="${APP_DIR}/scripts/deploy-vds.sh"
+  local current_script
+
+  [[ -f "${repo_script}" ]] || return 0
+
+  current_script="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/$(basename "${BASH_SOURCE[0]:-$0}")"
+  if [[ "${current_script}" != "${repo_script}" ]]; then
+    log "Перезапуск актуального скрипта из репозитория..."
+    exec bash "${repo_script}" "$@"
+  fi
+}
+
 clone_repo() {
+  local mode="${1:-}"
+
   if [[ -d "${APP_DIR}/.git" ]]; then
     log "Репозиторий уже есть, обновление (git pull)..."
     git -C "${APP_DIR}" pull --ff-only
@@ -115,6 +144,7 @@ clone_repo() {
     echo '{ "ips": [] }' > "${APP_DIR}/data/visitors.json"
   fi
 
+  reexec_from_repo ${mode:+"${mode}"}
   ensure_app_ownership
 }
 
@@ -276,7 +306,7 @@ cmd_update() {
   command -v bun >/dev/null 2>&1 || install_bun
   # shellcheck disable=SC1090
   [[ -f "${DEPLOY_ENV}" ]] && source "${DEPLOY_ENV}"
-  clone_repo
+  clone_repo --update
   build_app
   systemctl restart "${APP_NAME}"
   nginx -t && systemctl reload nginx
