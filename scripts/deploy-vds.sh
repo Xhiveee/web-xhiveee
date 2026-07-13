@@ -134,17 +134,30 @@ reexec_from_repo() {
   fi
 }
 
-clone_repo() {
-  local mode="${1:-}"
-
+git_repo_sync() {
   if [[ -d "${APP_DIR}/.git" ]]; then
     log "Репозиторий уже есть, обновление (git pull)..."
-    git -C "${APP_DIR}" pull --ff-only
+    if [[ "${EUID:-0}" -eq 0 ]]; then
+      git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+      if id -u "${APP_USER}" >/dev/null 2>&1; then
+        sudo -u "${APP_USER}" git -C "${APP_DIR}" pull --ff-only
+      else
+        git -C "${APP_DIR}" pull --ff-only
+      fi
+    else
+      git -C "${APP_DIR}" pull --ff-only
+    fi
   else
     log "Клонирование репозитория в ${APP_DIR}..."
     rm -rf "${APP_DIR}"
     git clone "${GIT_REPO}" "${APP_DIR}"
   fi
+}
+
+clone_repo() {
+  local mode="${1:-}"
+
+  git_repo_sync
 
   mkdir -p "${APP_DIR}/data"
 
