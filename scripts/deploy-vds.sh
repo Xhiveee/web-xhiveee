@@ -235,7 +235,7 @@ Group=${APP_USER}
 WorkingDirectory=${APP_DIR}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
-Environment=PREVIEW_ALLOWED_HOSTS=${DOMAIN},www.${DOMAIN},localhost,127.0.0.1
+Environment=PREVIEW_ALLOWED_HOSTS=${DOMAIN},localhost,127.0.0.1
 ExecStart=${BUN_BIN} run preview
 Restart=on-failure
 RestartSec=5
@@ -256,7 +256,7 @@ write_nginx_config() {
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN} www.${DOMAIN};
+    server_name ${DOMAIN};
 
     client_max_body_size 20m;
 
@@ -288,7 +288,6 @@ setup_ssl() {
   log "Получение SSL-сертификата..."
   certbot --nginx \
     -d "${DOMAIN}" \
-    -d "www.${DOMAIN}" \
     --non-interactive \
     --agree-tos \
     -m "${EMAIL}" \
@@ -331,8 +330,8 @@ cmd_install() {
   build_app
   write_systemd_unit
   write_nginx_config
-  setup_ssl
   setup_firewall
+  setup_ssl
   print_summary
 }
 
@@ -353,7 +352,11 @@ cmd_update() {
   # shellcheck disable=SC1090
   [[ -f "${DEPLOY_ENV}" ]] && source "${DEPLOY_ENV}"
   build_app
-  [[ -f "${DEPLOY_ENV}" ]] && write_systemd_unit
+  if [[ -f "${DEPLOY_ENV}" ]]; then
+    write_systemd_unit
+    write_nginx_config
+    setup_firewall
+  fi
   systemctl restart "${APP_NAME}"
   nginx -t && systemctl reload nginx
   print_summary
