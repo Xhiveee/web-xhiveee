@@ -121,6 +121,12 @@ ensure_app_ownership() {
   chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 }
 
+configure_git_safe_directory() {
+  [[ "${EUID:-0}" -eq 0 ]] || return 0
+  [[ -d "${APP_DIR}/.git" ]] || return 0
+  git config --global --add safe.directory "${APP_DIR}"
+}
+
 reexec_from_repo() {
   local repo_script="${APP_DIR}/scripts/deploy-vds.sh"
   local current_script
@@ -137,16 +143,8 @@ reexec_from_repo() {
 git_repo_sync() {
   if [[ -d "${APP_DIR}/.git" ]]; then
     log "Репозиторий уже есть, обновление (git pull)..."
-    if [[ "${EUID:-0}" -eq 0 ]]; then
-      git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
-      if id -u "${APP_USER}" >/dev/null 2>&1; then
-        sudo -u "${APP_USER}" git -C "${APP_DIR}" pull --ff-only
-      else
-        git -C "${APP_DIR}" pull --ff-only
-      fi
-    else
-      git -C "${APP_DIR}" pull --ff-only
-    fi
+    configure_git_safe_directory
+    git -C "${APP_DIR}" pull --ff-only
   else
     log "Клонирование репозитория в ${APP_DIR}..."
     rm -rf "${APP_DIR}"
@@ -157,7 +155,10 @@ git_repo_sync() {
 clone_repo() {
   local mode="${1:-}"
 
+  configure_git_safe_directory
+  reexec_from_repo ${mode:+"${mode}"}
   git_repo_sync
+  reexec_from_repo ${mode:+"${mode}"}
 
   mkdir -p "${APP_DIR}/data"
 
@@ -165,7 +166,6 @@ clone_repo() {
     echo '{ "ips": [] }' > "${APP_DIR}/data/visitors.json"
   fi
 
-  reexec_from_repo ${mode:+"${mode}"}
   ensure_app_ownership
 }
 
@@ -307,6 +307,8 @@ cmd_install() {
   require_root
   detect_os
   bootstrap_git
+  configure_git_safe_directory
+  reexec_from_repo
   setup_app_user
   clone_repo
   install_packages
