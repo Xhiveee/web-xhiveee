@@ -2,12 +2,9 @@
 #
 # Деплой xhiveee на VDS (Ubuntu/Debian).
 #
-# Первый запуск (скачать bootstrap, дальше скрипт сам обновится из репозитория):
+# Установка (от root):
 #   curl -fsSL https://raw.githubusercontent.com/Xhiveee/web-xhiveee/main/scripts/deploy-vds.sh -o deploy-vds.sh
 #   bash deploy-vds.sh
-#
-# Или если репозиторий уже в /opt/xhiveee:
-#   bash /opt/xhiveee/scripts/deploy-vds.sh
 #
 # Обновление:
 #   bash /opt/xhiveee/scripts/deploy-vds.sh --update
@@ -20,9 +17,11 @@ APP_DIR="/opt/xhiveee"
 APP_USER="xhiveee"
 APP_PORT="4173"
 BUN_VERSION="1.3.14"
+BUN_BIN="/usr/local/bin/bun"
 NGINX_SITE="/etc/nginx/sites-available/${APP_NAME}"
 SYSTEMD_UNIT="/etc/systemd/system/${APP_NAME}.service"
 DEPLOY_ENV="${APP_DIR}/.deploy.env"
+REPO_SCRIPT="${APP_DIR}/scripts/deploy-vds.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -50,12 +49,66 @@ detect_os() {
   fi
 }
 
+configure_git_safe_directory() {
+  [[ "${EUID:-0}" -eq 0 ]] || return 0
+  [[ -d "${APP_DIR}/.git" ]] || return 0
+  git config --global --add safe.directory "${APP_DIR}"
+}
+
 bootstrap_git() {
   command -v git >/dev/null 2>&1 && return
-  log "Установка git для клонирования..."
+  log "Установка git..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq git ca-certificates
+}
+
+bootstrap_repo() {
+  bootstrap_git
+  configure_git_safe_directory
+
+  if [[ -d "${APP_DIR}/.git" ]]; then
+    log "Обновление репозитория (git pull)..."
+    git -C "${APP_DIR}" pull --ff-only
+  else
+    log "Клонирование репозитория в ${APP_DIR}..."
+    rm -rf "${APP_DIR}"
+    git clone "${GIT_REPO}" "${APP_DIR}"
+  fi
+
+  [[ -f "${REPO_SCRIPT}" ]] || die "Скрипт не найден: ${REPO_SCRIPT}"
+}
+
+handoff_to_repo_script() {
+  log "Запуск установки из репозитория..."
+  exec env DEPLOY_FROM_REPO=1 bash "${REPO_SCRIPT}" "$@"
+}
+
+setup_app_user() {
+  if id -u "${APP_USER}" >/dev/null 2>&1; then
+    log "Пользователь ${APP_USER} уже существует"
+    return
+  fi
+
+  log "Создание пользователя ${APP_USER}..."
+  if useradd --system --no-create-home --shell /usr/sbin/nologin "${APP_USER}" 2>/dev/null; then
+    return
+  fi
+
+  groupadd --system "${APP_USER}" 2>/dev/null || true
+  useradd --system --no-create-home --gid "${APP_USER}" --shell /usr/sbin/nologin "${APP_USER}" \
+    || die "Не удалось создать пользователя ${APP_USER}"
+}
+
+prepare_repo_data() {
+  setup_app_user
+  mkdir -p "${APP_DIR}/data"
+
+  if [[ ! -f "${APP_DIR}/data/visitors.json" ]]; then
+    echo '{ "ips": [] }' > "${APP_DIR}/data/visitors.json"
+  fi
+
+  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 }
 
 install_packages() {
@@ -73,17 +126,13 @@ install_packages() {
     ufw
 }
 
-BUN_BIN="/usr/local/bin/bun"
-
 install_bun() {
   if [[ -x "${BUN_BIN}" ]] && sudo -u "${APP_USER}" "${BUN_BIN}" --version >/dev/null 2>&1; then
     log "Bun уже установлен: $("${BUN_BIN}" --version)"
     return
   fi
 
-  if [[ -L "${BUN_BIN}" ]]; then
-    rm -f "${BUN_BIN}"
-  fi
+  rm -f "${BUN_BIN}"
 
   if ! command -v unzip >/dev/null 2>&1; then
     log "Установка unzip (нужен для Bun)..."
@@ -106,97 +155,6 @@ install_bun() {
   log "Bun установлен: $("${BUN_BIN}" --version)"
 }
 
-setup_app_user() {
-  if id -u "${APP_USER}" >/dev/null 2>&1; then
-    log "Пользователь ${APP_USER} уже существует"
-    return
-  fi
-
-  log "Создание пользователя ${APP_USER}..."
-  if useradd --system --no-create-home --shell /usr/sbin/nologin "${APP_USER}" 2>/dev/null; then
-    return
-  fi
-
-  groupadd --system "${APP_USER}" 2>/dev/null || true
-  useradd --system --no-create-home --gid "${APP_USER}" --shell /usr/sbin/nologin "${APP_USER}" \
-    || die "Не удалось создать пользователя ${APP_USER}"
-
-  id -u "${APP_USER}" >/dev/null 2>&1 || die "Пользователь ${APP_USER} не создан"
-}
-
-ensure_app_ownership() {
-  setup_app_user
-  id -u "${APP_USER}" >/dev/null 2>&1 || die "Пользователь ${APP_USER} не найден"
-  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
-}
-
-configure_git_safe_directory() {
-  [[ "${EUID:-0}" -eq 0 ]] || return 0
-  [[ -d "${APP_DIR}/.git" ]] || return 0
-  git config --global --add safe.directory "${APP_DIR}"
-}
-
-reexec_from_repo() {
-  local repo_script="${APP_DIR}/scripts/deploy-vds.sh"
-  local current_script
-
-  [[ -f "${repo_script}" ]] || return 0
-
-  current_script="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/$(basename "${BASH_SOURCE[0]:-$0}")"
-  if [[ "${current_script}" != "${repo_script}" ]]; then
-    log "Перезапуск актуального скрипта из репозитория..."
-    exec bash "${repo_script}" "$@"
-  fi
-}
-
-reexec_after_pull() {
-  local mode="${1:-}"
-  local repo_script="${APP_DIR}/scripts/deploy-vds.sh"
-
-  [[ -f "${repo_script}" ]] || return 0
-  [[ "${DEPLOY_REPO_UPDATED:-0}" == "1" ]] || return 0
-
-  log "Перезапуск после обновления репозитория..."
-  exec bash "${repo_script}" ${mode:+"${mode}"}
-}
-
-git_repo_sync() {
-  DEPLOY_REPO_UPDATED=0
-
-  if [[ -d "${APP_DIR}/.git" ]]; then
-    log "Репозиторий уже есть, обновление (git pull)..."
-    configure_git_safe_directory
-    local pull_output
-    pull_output="$(git -C "${APP_DIR}" pull --ff-only 2>&1)" || die "${pull_output}"
-    echo "${pull_output}"
-    if ! grep -q 'Already up to date' <<< "${pull_output}"; then
-      DEPLOY_REPO_UPDATED=1
-    fi
-  else
-    log "Клонирование репозитория в ${APP_DIR}..."
-    rm -rf "${APP_DIR}"
-    git clone "${GIT_REPO}" "${APP_DIR}"
-    DEPLOY_REPO_UPDATED=1
-  fi
-}
-
-clone_repo() {
-  local mode="${1:-}"
-
-  configure_git_safe_directory
-  reexec_from_repo ${mode:+"${mode}"}
-  git_repo_sync
-  reexec_after_pull ${mode:+"${mode}"}
-
-  mkdir -p "${APP_DIR}/data"
-
-  if [[ ! -f "${APP_DIR}/data/visitors.json" ]]; then
-    echo '{ "ips": [] }' > "${APP_DIR}/data/visitors.json"
-  fi
-
-  ensure_app_ownership
-}
-
 prompt_domain() {
   if [[ -f "${DEPLOY_ENV}" ]]; then
     # shellcheck disable=SC1090
@@ -206,12 +164,12 @@ prompt_domain() {
   fi
 
   echo ""
-  echo "Настройка домена для Nginx и SSL-сертификата."
-  warn "Перед продолжением убедитесь, что DNS A-запись домена указывает на этот сервер."
+  echo "Настройка домена для Nginx и SSL."
+  warn "DNS A-запись домена должна указывать на IP этого сервера."
   echo ""
 
   while true; do
-    read -rp "Введите домен (например xhiveee.ru): " DOMAIN
+    read -rp "Домен (например xhiveee.ru): " DOMAIN
     DOMAIN=$(echo "${DOMAIN}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
     [[ -n "${DOMAIN}" ]] && break
     warn "Домен не может быть пустым"
@@ -238,7 +196,7 @@ build_app() {
 }
 
 write_systemd_unit() {
-  log "Настройка systemd-сервиса..."
+  log "Настройка systemd..."
   cat > "${SYSTEMD_UNIT}" <<EOF
 [Unit]
 Description=${APP_NAME} — Svelte landing
@@ -301,7 +259,7 @@ setup_ssl() {
     return
   fi
 
-  log "Получение SSL-сертификата Let's Encrypt..."
+  log "Получение SSL-сертификата..."
   certbot --nginx \
     -d "${DOMAIN}" \
     -d "www.${DOMAIN}" \
@@ -314,7 +272,7 @@ setup_ssl() {
 
 setup_firewall() {
   command -v ufw >/dev/null 2>&1 || return
-  log "Настройка UFW (22, 80, 443)..."
+  log "Настройка UFW..."
   ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp
   ufw allow 'Nginx Full' >/dev/null 2>&1 || { ufw allow 80/tcp; ufw allow 443/tcp; }
   ufw --force enable
@@ -327,18 +285,20 @@ print_summary() {
   echo "  Код:     ${APP_DIR}"
   echo "  Статус:  systemctl status ${APP_NAME}"
   echo "  Логи:    journalctl -u ${APP_NAME} -f"
-  echo "  Update:  bash ${APP_DIR}/scripts/deploy-vds.sh --update"
+  echo "  Update:  bash ${REPO_SCRIPT} --update"
   echo ""
 }
 
 cmd_install() {
   require_root
   detect_os
-  bootstrap_git
-  configure_git_safe_directory
-  reexec_from_repo
-  setup_app_user
-  clone_repo
+
+  if [[ "${DEPLOY_FROM_REPO:-0}" != "1" ]]; then
+    bootstrap_repo
+    handoff_to_repo_script
+  fi
+
+  prepare_repo_data
   install_packages
   install_bun
   prompt_domain
@@ -353,11 +313,19 @@ cmd_install() {
 cmd_update() {
   require_root
   detect_os
-  [[ -d "${APP_DIR}/.git" ]] || die "Проект не установлен. Сначала запустите: bash $0"
-  command -v bun >/dev/null 2>&1 || install_bun
+
+  if [[ "${DEPLOY_FROM_REPO:-0}" != "1" ]]; then
+    bootstrap_repo
+    handoff_to_repo_script --update
+  fi
+
+  [[ -d "${APP_DIR}/.git" ]] || die "Проект не установлен. Запустите: bash ${REPO_SCRIPT}"
+  configure_git_safe_directory
+  git -C "${APP_DIR}" pull --ff-only
+  prepare_repo_data
+  install_bun
   # shellcheck disable=SC1090
   [[ -f "${DEPLOY_ENV}" ]] && source "${DEPLOY_ENV}"
-  clone_repo --update
   build_app
   systemctl restart "${APP_NAME}"
   nginx -t && systemctl reload nginx
@@ -370,14 +338,14 @@ main() {
     -h|--help)
       cat <<EOF
 Использование:
-  bash $0           Первая установка (клонирование + настройка)
-  bash $0 --update  Обновление кода с GitHub
+  bash $0           Установка
+  bash $0 --update  Обновление
 
-Проект устанавливается в ${APP_DIR}
+Проект: ${APP_DIR}
 EOF
       ;;
     "") cmd_install ;;
-    *) die "Неизвестный аргумент: $1. Используйте: bash $0" ;;
+    *) die "Неизвестный аргумент: $1" ;;
   esac
 }
 
