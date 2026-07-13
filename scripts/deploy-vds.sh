@@ -87,10 +87,16 @@ install_bun() {
 }
 
 setup_app_user() {
-  if ! id "${APP_USER}" >/dev/null 2>&1; then
-    log "Создание пользователя ${APP_USER}..."
-    useradd --system --home "${APP_DIR}" --shell /usr/sbin/nologin "${APP_USER}"
+  if id "${APP_USER}" >/dev/null 2>&1; then
+    return
   fi
+  log "Создание пользователя ${APP_USER}..."
+  useradd --system --no-create-home --shell /usr/sbin/nologin "${APP_USER}"
+}
+
+ensure_app_ownership() {
+  setup_app_user
+  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 }
 
 clone_repo() {
@@ -104,12 +110,12 @@ clone_repo() {
   fi
 
   mkdir -p "${APP_DIR}/data"
-  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 
   if [[ ! -f "${APP_DIR}/data/visitors.json" ]]; then
     echo '{ "ips": [] }' > "${APP_DIR}/data/visitors.json"
-    chown "${APP_USER}:${APP_USER}" "${APP_DIR}/data/visitors.json"
   fi
+
+  ensure_app_ownership
 }
 
 prompt_domain() {
@@ -250,11 +256,10 @@ cmd_install() {
   require_root
   detect_os
   bootstrap_git
+  setup_app_user
   clone_repo
   install_packages
   install_bun
-  setup_app_user
-  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
   prompt_domain
   build_app
   write_systemd_unit
